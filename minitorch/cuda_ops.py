@@ -99,7 +99,6 @@ class CudaOps(TensorOps):
             f[blockspergrid, threadsperblock](  # type: ignore
                 *out_a.tuple(), out_a.size, *a.tuple(), dim, start
             )
-
             return out_a
 
         return ret
@@ -221,14 +220,22 @@ def tensor_zip(
         i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
 
         # TODO: Implement for Task 3.3.
+        # if i < out_size:
+        #     to_index(i, out_shape, out_index)
+        #     broadcast_index(out_index, out_shape, a_shape, a_index)
+        #     broadcast_index(out_index, out_shape, b_shape, b_index)
+        #     o = index_to_position(out_index, out_strides)
+        #     j_a = index_to_position(a_index, a_strides)
+        #     j_b = index_to_position(b_index, b_strides)
+        #     out[o] = fn(a_storage[j_a], b_storage[j_b])
         if i < out_size:
             to_index(i, out_shape, out_index)
-            broadcast_index(out_index, out_shape, a_shape, a_index)
-            broadcast_index(out_index, out_shape, b_shape, b_index)
             o = index_to_position(out_index, out_strides)
-            j_a = index_to_position(a_index, a_strides)
-            j_b = index_to_position(b_index, b_strides)
-            out[o] = fn(a_storage[j_a], b_storage[j_b])
+            broadcast_index(out_index, out_shape, a_shape, a_index)
+            j = index_to_position(a_index, a_strides)
+            broadcast_index(out_index, out_shape, b_shape, b_index)
+            k = index_to_position(b_index, b_strides)
+            out[o] = fn(a_storage[j], b_storage[k])
     return cuda.jit()(_zip)  # type: ignore
 
 
@@ -387,7 +394,6 @@ def _mm_practice(out: Storage, a: Storage, b: Storage, size: int) -> None:
         accum = 0.0
         for k in range(size):
             accum += a_shared[i, k] * b_shared[k, j]
-            
         out[size * i + j] = accum
 
 jit_mm_practice = jit(_mm_practice)
@@ -456,7 +462,32 @@ def _tensor_matrix_multiply(
     #    b) Copy into shared memory for b matrix
     #    c) Compute the dot produce for position c[i, j]
     # TODO: Implement for Task 3.4.
-    raise NotImplementedError("Need to implement for Task 3.4")
+    batch = cuda.blockIdx.z
+
+    accum = 0.0
+    for k_start in range(0, a_shape[2], THREADS_PER_BLOCK):
+        k = k_start + pj
+        if i < a_shape[1] and k < a_shape[2]:
+            a_shared[pi, pj] = a_storage[
+                batch * a_strides[0] + i * a_strides[1] + k * a_strides[2]
+            ]
+        else:
+            a_shared[pi, pj] = 0.0
+
+        k = k_start + pi
+        if j < b_shape[2] and k < b_shape[1]:
+            b_shared[pi, pj] = b_storage[
+                batch * b_strides[0] + k * b_strides[1] + j * b_strides[2]
+            ]
+        else:
+            b_shared[pi, pj] = 0.0
+        cuda.syncthreads()
+        for k in range(THREADS_PER_BLOCK):
+            if (k_start + k) < a_shape[2]:
+                accum += a_shared[pi, k] * b_shared[k, pj]
+        cuda.syncthreads()
+    if i < out_shape[1] and j < out_shape[2]:
+        out[batch * out_strides[0] + i * out_strides[1] + j * out_strides[2]] = accum
 
 
 tensor_matrix_multiply = jit(_tensor_matrix_multiply)
