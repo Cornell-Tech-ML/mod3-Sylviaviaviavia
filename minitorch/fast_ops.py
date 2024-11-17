@@ -169,19 +169,22 @@ def tensor_map(
         in_strides: Strides,
     ) -> None:
         # TODO: Implement for Task 3.1.
-        out_size = len(out)
-        if np.allclose(out_shape, in_shape) and np.allclose(out_strides, in_strides):
-            for i in prange(out_size):
-                out[i] = fn(in_storage[i])
-        else:
-            in_index = np.zeros_like(in_shape)
-            out_index = np.zeros_like(out_shape)
-            for i in prange(out_size):
+        if(
+            len(out_strides) != len(in_strides)
+            or (out_strides != in_strides).any()
+            or (out_shape != in_shape).any()
+        ):
+            for i in prange(len(out)):
+                out_index: Index = np.empty(MAX_DIMS, np.int32)
+                in_index: Index = np.empty(MAX_DIMS, np.int32)
                 to_index(i, out_shape, out_index)
                 broadcast_index(out_index, out_shape, in_shape, in_index)
                 o = index_to_position(out_index, out_strides)
                 j = index_to_position(in_index, in_strides)
                 out[o] = fn(in_storage[j])
+        else:  
+            for i in prange(len(out)):
+                out[i] = fn(in_storage[i])
     return njit(_map, parallel=True)  # type: ignore
 
 
@@ -220,23 +223,25 @@ def tensor_zip(
         b_strides: Strides,
     ) -> None:
         # TODO: Implement for Task 3.1.
-        out_size = len(out)
-        if ((np.allclose(a_shape, out_shape) and np.allclose(a_strides, out_strides)) and
-                (np.allclose(a_shape, b_shape) and np.allclose(a_strides, b_strides))):
-            for i in prange(out_size):
+        if (np.array_equal(out_strides, a_strides) and 
+            np.array_equal(out_strides, b_strides) and 
+            np.array_equal(out_shape, a_shape) and 
+            np.array_equal(out_shape, b_shape)):
+            for i in prange(len(out)):
                 out[i] = fn(a_storage[i], b_storage[i])
-        else:
-            a_index = np.zeros_like(a_shape)
-            b_index = np.zeros_like(b_shape)
-            out_index = np.zeros_like(out_shape)
-            for i in prange(out_size):
-                to_index(i, out_shape, out_index)
-                o = index_to_position(out_index, out_strides)
-                broadcast_index(out_index, out_shape, a_shape, a_index)
-                j = index_to_position(a_index, a_strides)
-                broadcast_index(out_index, out_shape, b_shape, b_index)
-                k = index_to_position(b_index, b_strides)
-                out[o] = fn(a_storage[j], b_storage[k])
+            return
+        size = len(out)
+        for i in prange(size):
+            out_index = np.zeros(len(out_shape), np.int32)
+            a_index = np.zeros(len(a_shape), np.int32)
+            b_index = np.zeros(len(b_shape), np.int32)
+            to_index(i, out_shape, out_index)
+            broadcast_index(out_index, out_shape, a_shape, a_index)
+            broadcast_index(out_index, out_shape, b_shape, b_index)
+            out[index_to_position(out_index, out_strides)] = fn(
+                a_storage[index_to_position(a_index, a_strides)],
+                b_storage[index_to_position(b_index, b_strides)]
+            )
 
     return njit(_zip, parallel=True)  # type: ignore
 
@@ -334,20 +339,22 @@ def _tensor_matrix_multiply(
     b_batch_stride = b_strides[0] if b_shape[0] > 1 else 0
 
     # TODO: Implement for Task 3.2.
-    for out_pos in prange(len(out)):
+    batch_size = out_shape[0]
+    row_size = out_shape[1]
+    col_size = out_shape[2]
+    inner_dimension_size = a_shape[2]
 
-        out_row = (out_pos // out_strides[-2]) % out_shape[-2]
-        out_col = (out_pos // out_strides[-1]) % out_shape[-1]
-        out_batch = out_pos // out_strides[0] if len(out_shape) > 2 else 0
-
-        a_pos = out_batch * a_batch_stride + out_row * a_strides[-2]
-        b_pos = out_batch * b_batch_stride + out_col * b_strides[-1]
-
-        sum_product = 0.
-        for _ in range(b_shape[-2]):
-            sum_product += a_storage[a_pos] * b_storage[b_pos]
-            a_pos += a_strides[-1]
-            b_pos += b_strides[-2]
-        out[out_pos] = sum_product
+    for batch in prange(batch_size):
+        for row in prange(row_size):
+            for col in prange(col_size):
+                a_pos = batch * a_batch_stride + row * a_strides[1]
+                b_pos = batch * b_batch_stride + col * b_strides[2]
+                accumulator = 0.0
+                for _ in range(inner_dimension_size):
+                    accumulator += a_storage[a_pos] * b_storage[b_pos]
+                    a_pos += a_strides[2]
+                    b_pos += b_strides[1]
+                out_pos = batch * out_strides[0] + row * out_strides[1] + col * out_strides[2]
+                out[out_pos] = accumulator
 tensor_matrix_multiply = njit(_tensor_matrix_multiply, parallel=True)
 assert tensor_matrix_multiply is not None
