@@ -345,8 +345,8 @@ def _tensor_matrix_multiply(
     inner_dimension_size = a_shape[2]
 
     for batch in prange(batch_size):
-        for row in prange(row_size):
-            for col in prange(col_size):
+        for row in range(row_size):
+            for col in range(col_size):
                 a_pos = batch * a_batch_stride + row * a_strides[1]
                 b_pos = batch * b_batch_stride + col * b_strides[2]
                 accumulator = 0.0
