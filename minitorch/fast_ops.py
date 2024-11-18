@@ -30,6 +30,7 @@ Fn = TypeVar("Fn")
 
 
 def njit(fn: Fn, **kwargs: Any) -> Fn:
+    """JIT-compile a function for execution on the host or device."""
     return _njit(inline="always", **kwargs)(fn)  # type: ignore
 
 
@@ -169,7 +170,7 @@ def tensor_map(
         in_strides: Strides,
     ) -> None:
         # TODO: Implement for Task 3.1.
-        if(
+        if (
             len(out_strides) != len(in_strides)
             or (out_strides != in_strides).any()
             or (out_shape != in_shape).any()
@@ -182,9 +183,10 @@ def tensor_map(
                 o = index_to_position(out_index, out_strides)
                 j = index_to_position(in_index, in_strides)
                 out[o] = fn(in_storage[j])
-        else:  
+        else:
             for i in prange(len(out)):
                 out[i] = fn(in_storage[i])
+
     return njit(_map, parallel=True)  # type: ignore
 
 
@@ -223,10 +225,12 @@ def tensor_zip(
         b_strides: Strides,
     ) -> None:
         # TODO: Implement for Task 3.1.
-        if (np.array_equal(out_strides, a_strides) and 
-            np.array_equal(out_strides, b_strides) and 
-            np.array_equal(out_shape, a_shape) and 
-            np.array_equal(out_shape, b_shape)):
+        if (
+            np.array_equal(out_strides, a_strides)
+            and np.array_equal(out_strides, b_strides)
+            and np.array_equal(out_shape, a_shape)
+            and np.array_equal(out_shape, b_shape)
+        ):
             for i in prange(len(out)):
                 out[i] = fn(a_storage[i], b_storage[i])
             return
@@ -240,7 +244,7 @@ def tensor_zip(
             broadcast_index(out_index, out_shape, b_shape, b_index)
             out[index_to_position(out_index, out_strides)] = fn(
                 a_storage[index_to_position(a_index, a_strides)],
-                b_storage[index_to_position(b_index, b_strides)]
+                b_storage[index_to_position(b_index, b_strides)],
             )
 
     return njit(_zip, parallel=True)  # type: ignore
@@ -288,7 +292,8 @@ def tensor_reduce(
             for s in range(reduce_size):
                 accum = fn(accum, a_storage[j])
                 j += step
-            out[o] = accum 
+            out[o] = accum
+
     return njit(_reduce, parallel=True)  # type: ignore
 
 
@@ -354,7 +359,11 @@ def _tensor_matrix_multiply(
                     accumulator += a_storage[a_pos] * b_storage[b_pos]
                     a_pos += a_strides[2]
                     b_pos += b_strides[1]
-                out_pos = batch * out_strides[0] + row * out_strides[1] + col * out_strides[2]
+                out_pos = (
+                    batch * out_strides[0] + row * out_strides[1] + col * out_strides[2]
+                )
                 out[out_pos] = accumulator
+
+
 tensor_matrix_multiply = njit(_tensor_matrix_multiply, parallel=True)
 assert tensor_matrix_multiply is not None

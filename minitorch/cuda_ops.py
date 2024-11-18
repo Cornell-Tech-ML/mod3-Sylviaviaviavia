@@ -29,11 +29,35 @@ FakeCUDAKernel = Any
 Fn = TypeVar("Fn")
 
 
-def device_jit(fn: Fn, **kwargs) -> Fn:
+def device_jit(fn: Fn, **kwargs) -> Fn:  # noqa: ANN003
+    """JIT-compile a function for execution on a CUDA device.
+
+    Args:
+    ----
+        fn (Fn): The function to compile.
+        **kwargs (Any): Additional keyword arguments for the JIT compilation.
+
+    Returns:
+    -------
+        Fn: The JIT-compiled function.
+
+    """
     return _jit(device=True, **kwargs)(fn)  # type: ignore
 
 
-def jit(fn, **kwargs) -> FakeCUDAKernel:
+def jit(fn, **kwargs) -> FakeCUDAKernel:  # noqa: ANN001, ANN003
+    """JIT-compile a function for execution on the host or device.
+
+    Args:
+    ----
+        fn (Callable): The function to compile.
+        **kwargs (Any): Additional keyword arguments for the JIT compilation.
+
+    Returns:
+    -------
+        FakeCUDAKernel: The JIT-compiled kernel function.
+
+    """
     return _jit(**kwargs)(fn)  # type: ignore
 
 
@@ -67,6 +91,35 @@ class CudaOps(TensorOps):
 
     @staticmethod
     def zip(fn: Callable[[float, float], float]) -> Callable[[Tensor, Tensor], Tensor]:
+        """Higher-order tensor zip function ::
+
+          fn_zip = zip(fn)
+          out = fn_zip(a, b)
+
+        Simple version ::
+
+            for i:
+                for j:
+                    out[i, j] = fn(a[i, j], b[i, j])
+
+        Broadcasted version (`a` and `b` might be smaller than `out`) ::
+
+            for i:
+                for j:
+                    out[i, j] = fn(a[i, 0], b[0, j])
+
+
+        Args:
+        ----
+            fn: function from two floats-to-float to apply
+            a (:class:`TensorData`): tensor to zip over
+            b (:class:`TensorData`): tensor to zip over
+
+        Returns:
+        -------
+            :class:`TensorData` : new tensor data
+
+        """
         cufn: Callable[[float, float], float] = device_jit(fn)
         f = tensor_zip(cufn)
 
@@ -86,6 +139,36 @@ class CudaOps(TensorOps):
     def reduce(
         fn: Callable[[float, float], float], start: float = 0.0
     ) -> Callable[[Tensor, int], Tensor]:
+        """Higher-order tensor reduce function.
+
+        This method returns a function that reduces a tensor along a specified dimension
+        by applying a given binary function (fn). The binary function takes two floats
+        and returns a float, and the reduction starts from a specified initial value.
+
+        Example:
+        -------
+            fn_reduce = reduce(fn)
+            out = fn_reduce(a, dim)
+
+        Simple version:
+
+            for j:
+                out[1, j] = start
+                for i:
+                    out[1, j] = fn(out[1, j], a[i, j])
+
+        Args:
+        ----
+            fn (Callable[[float, float], float]): A binary function that takes two floats
+                and returns a float. This function is applied to the tensor elements during reduction.
+            start (float, optional): The initial value to start the reduction from. Defaults to 0.0.
+
+        Returns:
+        -------
+            Callable[["Tensor", int], "Tensor"]: A function that reduces the input tensor
+                over a given dimension using the provided binary function.
+
+        """
         cufn: Callable[[float, float], float] = device_jit(fn)
         f = tensor_reduce(cufn)
 
@@ -105,6 +188,7 @@ class CudaOps(TensorOps):
 
     @staticmethod
     def matrix_multiply(a: Tensor, b: Tensor) -> Tensor:
+        """Matrix multiplication"""
         # Make these always be a 3 dimensional multiply
         both_2d = 0
         if len(a.shape) == 2:
@@ -179,6 +263,7 @@ def tensor_map(
             o = index_to_position(out_index, out_strides)
             j = index_to_position(in_index, in_strides)
             out[o] = fn(in_storage[j])
+
     return cuda.jit()(_map)  # type: ignore
 
 
@@ -220,14 +305,6 @@ def tensor_zip(
         i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
 
         # TODO: Implement for Task 3.3.
-        # if i < out_size:
-        #     to_index(i, out_shape, out_index)
-        #     broadcast_index(out_index, out_shape, a_shape, a_index)
-        #     broadcast_index(out_index, out_shape, b_shape, b_index)
-        #     o = index_to_position(out_index, out_strides)
-        #     j_a = index_to_position(a_index, a_strides)
-        #     j_b = index_to_position(b_index, b_strides)
-        #     out[o] = fn(a_storage[j_a], b_storage[j_b])
         if i < out_size:
             to_index(i, out_shape, out_index)
             o = index_to_position(out_index, out_strides)
@@ -236,6 +313,7 @@ def tensor_zip(
             broadcast_index(out_index, out_shape, b_shape, b_index)
             k = index_to_position(b_index, b_strides)
             out[o] = fn(a_storage[j], b_storage[k])
+
     return cuda.jit()(_zip)  # type: ignore
 
 
@@ -267,24 +345,42 @@ def _sum_practice(out: Storage, a: Storage, size: int) -> None:
     pos = cuda.threadIdx.x
 
     # TODO: Implement for Task 3.3.
-    if i < size: 
+    if i < size:
         val = float(a[i])
-        cache[pos] = val 
+        cache[pos] = val
         cuda.syncthreads()
-    else: 
+    else:
         cache[pos] = 0.0
-    
-    if i < size: 
-        for j in [1,2,4,8,16]:
-            if pos % (j * 2) == 0: 
+
+    if i < size:
+        for j in [1, 2, 4, 8, 16]:
+            if pos % (j * 2) == 0:
                 cache[pos] += cache[pos + j]
                 cuda.syncthreads()
-        if pos == 0: 
+        if pos == 0:
             out[cuda.blockIdx.x] = cache[0]
+
+
 jit_sum_practice = cuda.jit()(_sum_practice)
 
 
 def sum_practice(a: Tensor) -> TensorData:
+    """Practice kernel for summing elements in a tensor using CUDA.
+
+    This function prepares and runs a CUDA kernel that computes the sum
+    of elements in a tensor by summing each block of `THREADS_PER_BLOCK`
+    elements into an output tensor cell. It uses shared memory within
+    the kernel for efficient computation.
+
+    Args:
+    ----
+        a (Tensor): The input tensor to be summed.
+
+    Returns:
+    -------
+        TensorData: A tensor containing the sum of the input tensor's elements
+
+    """
     (size,) = a.shape
     threadsperblock = THREADS_PER_BLOCK
     blockspergrid = (size // THREADS_PER_BLOCK) + 1
@@ -347,6 +443,7 @@ def tensor_reduce(
                     x += 1
             if pos == 0:
                 out[o] = cache[0]
+
     return jit(_reduce)  # type: ignore
 
 
@@ -396,10 +493,31 @@ def _mm_practice(out: Storage, a: Storage, b: Storage, size: int) -> None:
             accum += a_shared[i, k] * b_shared[k, j]
         out[size * i + j] = accum
 
+
 jit_mm_practice = jit(_mm_practice)
 
 
 def mm_practice(a: Tensor, b: Tensor) -> TensorData:
+    """Practice kernel for summing elements in a tensor using CUDA.
+
+    This function prepares and runs a CUDA kernel that computes the sum
+    of elements in a tensor by summing each block of `THREADS_PER_BLOCK`
+    elements into an output tensor cell. It uses shared memory within
+    the kernel for efficient computation.
+
+    Args:
+    ----
+        a (Tensor): The input tensor to be summed.a (Tensor): The first input tensor (matrix) of shape (size, size).
+                    Represents the left matrix in the multiplication.
+        b (Tensor): The second input tensor (matrix) of shape (size, size).
+                    Represents the right matrix in the multiplication.
+
+    Returns:
+    -------
+        TensorData: A tensor containing the sum of the input tensor's elements
+                    in blocks, stored in CUDA memory.
+
+    """
     (size, _) = a.shape
     threadsperblock = (THREADS_PER_BLOCK, THREADS_PER_BLOCK)
     blockspergrid = 1

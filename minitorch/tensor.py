@@ -297,7 +297,7 @@ class Tensor:
     def dims(self) -> int:
         """Returns the number of dimensions in the tensor"""
         return self._tensor.dims
-    
+
     @property
     def size(self) -> int:
         """Returns the total number of elements in the tensor"""
