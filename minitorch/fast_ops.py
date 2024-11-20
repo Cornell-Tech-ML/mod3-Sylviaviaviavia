@@ -170,6 +170,8 @@ def tensor_map(
         in_strides: Strides,
     ) -> None:
         # TODO: Implement for Task 3.1.
+        # Check if `out` and `in` have different strides or shapes.
+        # If they are not aligned, we need to handle the indexing.
         if (
             len(out_strides) != len(in_strides)
             or (out_strides != in_strides).any()
@@ -178,8 +180,11 @@ def tensor_map(
             for i in prange(len(out)):
                 out_index: Index = np.empty(MAX_DIMS, np.int32)
                 in_index: Index = np.empty(MAX_DIMS, np.int32)
+                # Convert the linear index `i` into multidimensional index for `out`.
                 to_index(i, out_shape, out_index)
+                # Broadcast `out_index` to `in_index` based on shapes.
                 broadcast_index(out_index, out_shape, in_shape, in_index)
+                # Get the position in `out` and `in` using strides.
                 o = index_to_position(out_index, out_strides)
                 j = index_to_position(in_index, in_strides)
                 out[o] = fn(in_storage[j])
@@ -231,15 +236,18 @@ def tensor_zip(
             and np.array_equal(out_shape, a_shape)
             and np.array_equal(out_shape, b_shape)
         ):
+            # When shapes and strides match, use a direct approach for better performance.
             for i in prange(len(out)):
                 out[i] = fn(a_storage[i], b_storage[i])
             return
+        # If shapes or strides do not match, use indexed broadcasting.
         size = len(out)
         for i in prange(size):
             out_index = np.zeros(len(out_shape), np.int32)
             a_index = np.zeros(len(a_shape), np.int32)
             b_index = np.zeros(len(b_shape), np.int32)
             to_index(i, out_shape, out_index)
+            # Broadcast `out_index` to `a_index` and `b_index` based on shapes.
             broadcast_index(out_index, out_shape, a_shape, a_index)
             broadcast_index(out_index, out_shape, b_shape, b_index)
             out[index_to_position(out_index, out_strides)] = fn(
@@ -282,15 +290,20 @@ def tensor_reduce(
     ) -> None:
         # TODO: Implement for Task 3.1.
         for i in prange(len(out)):
+            # Create an index array for the output tensor.
             out_index = np.empty(MAX_DIMS, np.int32)
             reduce_size = a_shape[reduce_dim]
             to_index(i, out_shape, out_index)
             o = index_to_position(out_index, out_strides)
+            # Initialize the accumulator with the current value at the output position.
             accum = out[o]
             j = index_to_position(out_index, a_strides)
             step = a_strides[reduce_dim]
+            # Iterate over the elements in the reduction dimension.
             for s in range(reduce_size):
+                # Apply the reduction function `fn` to accumulate the result.
                 accum = fn(accum, a_storage[j])
+                # Move to the next element in the reduction dimension.
                 j += step
             out[o] = accum
 
@@ -348,13 +361,16 @@ def _tensor_matrix_multiply(
     row_size = out_shape[1]
     col_size = out_shape[2]
     inner_dimension_size = a_shape[2]
-
+    # Iterate over each batch in parallel.
     for batch in prange(batch_size):
+        # Iterate over each row of the output matrix.
         for row in range(row_size):
+            # Iterate over each column of the output matrix.
             for col in range(col_size):
                 a_pos = batch * a_batch_stride + row * a_strides[1]
                 b_pos = batch * b_batch_stride + col * b_strides[2]
                 accumulator = 0.0
+                # Perform the dot product over the inner dimension.
                 for _ in range(inner_dimension_size):
                     accumulator += a_storage[a_pos] * b_storage[b_pos]
                     a_pos += a_strides[2]
